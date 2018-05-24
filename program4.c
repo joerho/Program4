@@ -16,18 +16,23 @@ int main(int argc, char *argv[]){
 
     if(argc == 2){
 
-        print_directory_entries(EXT2_ROOT_INO);
+        print_directory_entries(2);
+        //print_directory_entries(15432);
 
     }
     if(argc == 3){
         char out[PATH_LENGTH][FILE_NAME_SIZE];
         int size;
         size = split_file_path(argv[2], out);
-        for(int i = 0 ; i < size; i++){
-            printf("%s\n", out[i]);
-        }
+        print_path_directories(out,size);
 
     }
+    if(argc == 4){
+
+
+    }
+
+    return 1;
 
 
 

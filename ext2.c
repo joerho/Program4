@@ -70,7 +70,19 @@ int split_file_path(char *path, char out[PATH_LENGTH][FILE_NAME_SIZE]){
     return i;
 }
 
+//return 1 if something is different
+int compareStrings(char *first, char* second, int n){
+    int i;
+    for(i = 0; i < n; i++){
+        if(first[i] != second[i]){
+            return 1;
+        }
+    }
+    return 0;
+}
 
+//fills an array with the name
+//use this instead of strncpy
 void fill_name(uint16_t name_len, char *fill, char *name){
     int i;
     for(i = 0; i < name_len; i++){
@@ -79,7 +91,7 @@ void fill_name(uint16_t name_len, char *fill, char *name){
     fill[i] = '\0';
 }
 
-
+//prints the name
 void get_name(uint16_t name_len, char *name){
     int i;
     char temp[100];
@@ -90,6 +102,7 @@ void get_name(uint16_t name_len, char *name){
     temp[i] = '\0';
     printf("%s\n", temp);
 }
+
 
 uint32_t get_file_size(uint32_t inode_number){
     uint8_t inode[128];
@@ -122,7 +135,7 @@ uint32_t get_file_size(uint32_t inode_number){
 }
 
 
-//returns 1 if directory else
+//returns D if directory else F
 char get_file_type(uint32_t inode_number){
     uint8_t inode[128];
     struct ext2_inode *temp;
@@ -152,23 +165,25 @@ char get_file_type(uint32_t inode_number){
 
     type = type >> 12;
 
-    if(type == 4){
+    if(type & 4){
         return 'D';
     }
+    else{
+        return 'F';
+    }
 
-    return 'F';
 }
 
 
 
-
+//sorts a 2d array of strings
 void sort_strings(char list[FILES_PER_DIR][FILE_NAME_SIZE], int size){
 
     char temp[100];
 
-
-    for(int j = 0; j < size - 1; j++){
-        for(int i = j + 1; i < size; i++ ){
+    int j, i;
+    for(j = 0; j < size - 1; j++){
+        for(i = j + 1; i < size; i++ ){
             if(strcmp(list[j], list[i]) > 0){
                 strcpy(temp, list[j]);
                 strcpy(list[j], list[i]);
@@ -178,10 +193,12 @@ void sort_strings(char list[FILES_PER_DIR][FILE_NAME_SIZE], int size){
     }
 }
 
-//should only work with the root directory
-void print_one_directory(char *name){
+
+//returns the inode number of the file we are looking for specified by name
+//returns 0 if name is not found
+uint32_t get_inode_num(char *name, uint32_t initial_inode){
     uint8_t inode[128];
-    uint8_t dir_entry[9];
+    uint8_t dir_entry[FILE_NAME_SIZE + 9];
     struct ext2_inode *temp;
     struct ext2_dir_entry *dir;
 
@@ -189,13 +206,89 @@ void print_one_directory(char *name){
     uint32_t s_inodes_per_group = get_inodes_per_group();
 
     //get the block group that the inode is in (root : 2) should be 0
-    uint32_t block_group = get_block_group(EXT2_ROOT_INO, s_inodes_per_group);
+    uint32_t block_group = get_block_group(initial_inode, s_inodes_per_group);
 
     //get the inode table for this block_group
     uint32_t inode_table = get_inode_table(block_group);
 
     //index of the inode that we want. should be 2
-    uint32_t index = get_index(EXT2_ROOT_INO,s_inodes_per_group);
+    uint32_t index = get_index(initial_inode,s_inodes_per_group);
+
+    //get the block that contains our inode
+    uint32_t containing_block = get_containing_block(index);
+
+    //read data into inode array
+    read_data((inode_table + block_group * 8192) * 2 + containing_block,
+        INODE_SIZE * (index % 4), inode, INODE_SIZE);
+
+    //cast it as an inode struct
+    temp = (struct ext2_inode *)inode;
+
+    uint32_t block = 0;
+    uint32_t offset = 0;
+    uint32_t total = 0;
+    uint32_t data_block = temp->i_block[block] * 2;
+    char file_name[FILE_NAME_SIZE];
+    uint32_t inode_num;
+
+    while((data_block)!= 0){
+        offset = 0;
+
+
+        while( total < 1024){
+
+            read_data(data_block, offset, dir_entry, 100);
+            dir = (struct ext2_dir_entry *)dir_entry;
+
+            fill_name(dir->name_len, file_name, dir->name);
+            //printf("file name: %s\n",file_name);
+            if(strncmp(file_name, name, dir->name_len + 1) == 0){
+                //printf("inode: %d\n", dir->inode);
+                inode_num = dir->inode;
+                return inode_num;
+            }
+
+            total += dir->rec_len;
+            if(offset + dir->rec_len > 511){
+                data_block += 1;
+                offset = offset + dir->rec_len - 512;
+            }
+            else{
+                offset += dir->rec_len;
+            }
+            if(offset >= 512){
+                break;
+            }
+            // read_data(data_block, offset, dir_entry, 100);
+            // dir = (struct ext2_dir_entry *)dir_entry;
+        }
+        block+=1;
+        data_block = temp->i_block[block] * 2;
+    }
+    return 0;
+}
+
+
+
+
+//prints information given name and initial inode
+void print_one_directory(char *name, uint32_t initial_inode){
+    uint8_t inode[128];
+    uint8_t dir_entry[FILE_NAME_SIZE + 9];
+    struct ext2_inode *temp;
+    struct ext2_dir_entry *dir;
+
+    // get the number of inodes_per_group
+    uint32_t s_inodes_per_group = get_inodes_per_group();
+
+    //get the block group that the inode is in (root : 2) should be 0
+    uint32_t block_group = get_block_group(initial_inode, s_inodes_per_group);
+
+    //get the inode table for this block_group
+    uint32_t inode_table = get_inode_table(block_group);
+
+    //index of the inode that we want. should be 2
+    uint32_t index = get_index(initial_inode,s_inodes_per_group);
 
     //get the block that contains our inode
     uint32_t containing_block = get_containing_block(index);
@@ -209,45 +302,82 @@ void print_one_directory(char *name){
 
     int block = 0;
     int offset = 0;
-    uint32_t data_block ;
-    char file_name[FILE_NAME_SIZE];
+    int total = 0;
+    int size;
+    uint32_t data_block = temp->i_block[block] * 2;
+    // data_block = temp->i_block[1] * 2;
+    // printf("data_block: %d", data_block);
+
     uint32_t inode_num;
+    //printf("name: %s\n", name);
 
-    while((data_block = temp->i_block[block] * 2 )!= 0){
+    while((data_block )!= 0){
         offset = 0;
-        read_data(data_block, offset, dir_entry, 100);
-        dir = (struct ext2_dir_entry *)dir_entry;
+        total = 0;
+        // read_data(data_block, offset, dir_entry, 100);
+        // dir = (struct ext2_dir_entry *)dir_entry;
 
-        while(dir->inode != 0){
 
-            fill_name(dir->name_len, file_name, dir->name);
-            if(strcmp(file_name, name) == 0){
-                inode_num = dir->inode;
-            }
-            offset += dir->rec_len;
-            if(offset > 511){
-                data_block += 1;
-                offset = 0;
-            }
+        while( total < 1024){
+            char file_name[FILE_NAME_SIZE];
             read_data(data_block, offset, dir_entry, 100);
             dir = (struct ext2_dir_entry *)dir_entry;
+
+            fill_name(dir->name_len, file_name, dir->name);
+
+
+            //printf("strncmp: %d\n",strncmp(file_name, name, dir->name_len + 1));
+
+            //printf("file_name: %s data_block: %d\n",file_name, data_block);
+            if(strncmp(file_name, name, dir->name_len + 1) == 0){
+                //printf("file name: %s  name: %s name len: %d\n", file_name, name, dir->name_len);
+                inode_num = dir->inode;
+                char file_type = get_file_type(inode_num);
+                uint32_t file_size = get_file_size(inode_num);
+                if(file_type == 'D'){
+                    file_size = 0;
+                }
+                printf("%-20s %-20d %-20c \n", name, file_size, file_type);
+                //printf("%-30s %-30d %-30c %d\n", name, file_size, file_type, inode_num);
+                return;
+
+            }
+            // if(compareStrings(file_name,dir->name,dir->name_len + )){
+            //     inode_num = dir->inode;
+            // }
+            total += dir->rec_len;
+            if(offset + dir->rec_len > 511){
+                data_block += 1;
+                offset = offset + dir->rec_len - 512;
+            }
+            else{
+                offset += dir->rec_len;
+            }
+            if(offset >= 512){
+                break;
+            }
+
         }
         block+=1;
+        // printf("data_block: %d\n", data_block);
+        data_block = temp->i_block[block] * 2;
+        // printf("data_block: %d\n", data_block);
+        //data_block = 34742;
+        // printf("data_block: %d\n", data_block);
+
     }
 
-    char file_type = get_file_type(inode_num);
-    uint32_t file_size = get_file_size(inode_num);
 
-    printf("%-20s %-20d %c\n", name, file_size, file_type);
 
 
 
 }
 
 
+//this prints out all of the information of files inside a directory
 void print_directory_entries(uint32_t inode_number){
     uint8_t inode[128];
-    uint8_t dir_entry[9];
+    uint8_t dir_entry[FILE_NAME_SIZE + 9];
     struct ext2_inode *temp;
     struct ext2_dir_entry *dir;
 
@@ -273,47 +403,97 @@ void print_directory_entries(uint32_t inode_number){
     //cast it as an inode struct
     temp = (struct ext2_inode *)inode;
 
+    //printf("inode: %d\n",inode_number);
+    if(get_file_type(inode_number) == 'F'){
+        printf("Not a directory.\n");
+        exit(0);
+    }
+
     printf("%s %20s %20s\n" , "name" , "size" , "type");
 
 
 
-    int block = 0;
-    int offset = 0;
-    int file_ind = 0;
-    uint32_t data_block ;
+    uint32_t block = 0;
+    uint32_t total = 0;
+    uint32_t offset = 0;
+    uint32_t file_ind = 0;
+    uint32_t data_block = temp->i_block[0] * 2;
     char files[FILES_PER_DIR][FILE_NAME_SIZE];
 
-
-    while((data_block = temp->i_block[block] * 2 )!= 0){
+    while((data_block )!= 0){
 
         offset = 0;
-        read_data(data_block, offset, dir_entry, 100);
-        dir = (struct ext2_dir_entry *)dir_entry;
-
-        while(dir->inode != 0){
-
-            //strncpy(files[file_ind], dir->name, dir->name_len);
-            fill_name(dir->name_len, files[file_ind], dir->name);
-            file_ind ++;
-            offset += dir->rec_len;
-            if(offset > 511){
-                data_block += 1;
-                offset = 0;
-            }
+        total = 0;
+        while(total < 1024){
+            //printf("offset: %d\n",offset);
             read_data(data_block, offset, dir_entry, 100);
             dir = (struct ext2_dir_entry *)dir_entry;
+
+            //fill the name on to the 2d array of names
+            fill_name(dir->name_len , files[file_ind++], dir->name);
+            // strncpy(files[file_ind++],dir->name, dir->name_len);
+            // printf("offset: %d\n",offset);
+            // printf("dir->inode: %d\n",dir->inode);
+            // printf("dir->name_le : %d\n",dir->name_len);
+            // printf("dir->dir_len: %d\n",dir->rec_len);
+            // printf("file name: %s\n", files[file_ind - 1]);
+            // printf("file ind.: %d\n", file_ind - 1);
+            //increment the total bytes read in the block
+            total += dir->rec_len;
+
+            // printf("name :%s\n",files[file_ind-1]);
+            // printf("offset: %d rec_len: %d total: %d  inode: %d name: %s\n",offset, dir->rec_len, total,dir->inode, files[file_ind - 1]);
+
+            if(offset + dir->rec_len > 511){
+
+                data_block += 1;
+                offset = offset + dir->rec_len - 512;
+            }
+            else{
+
+                offset += dir->rec_len;
+            }
+            if(offset >= 511){
+                break;
+            }
+
+
+            //printf("offset: %d rec_len: %d total: %d  inode: %d name: %s\n",offset, dir->rec_len, total,dir->inode, files[file_ind - 1]);
+
+
+
         }
 
 
         block+=1;
+        //printf("block %d\n",block);
+        data_block = temp->i_block[block] * 2;
+
+
+
     }
-
-
     sort_strings(files,file_ind);
-    for(int i = 0; i < file_ind; i++){
-        print_one_directory(files[i]);
+
+    int i;
+    for(i = 0; i < file_ind ; i++){
+        //printf("files: %s\n",files[i]);
+        print_one_directory(files[i], inode_number);
+
+    }
+    //exit(0);
+}
+
+//prints everything in the directory given a path and number of elements in the path
+void print_path_directories(char path[PATH_LENGTH][FILE_NAME_SIZE], int size){
+    int inode = 2;
+
+    int i;
+    for(i =0; i < size ; i++){
+
+        inode = get_inode_num(path[i], inode);
+
     }
 
-
+    print_directory_entries(inode);
 
 }

@@ -27,13 +27,13 @@ typedef unsigned char uint8_t;
 #define INODE_SIZE 128
 
 /* Path length */
-#define PATH_LENGTH 100
+#define PATH_LENGTH 255
 
 /* File name size */
-#define FILE_NAME_SIZE 100
+#define FILE_NAME_SIZE 255
 
 /* Number of files in a dir */
-#define FILES_PER_DIR 100
+#define FILES_PER_DIR 1000
 
 /*
  * Structure of a blocks group descriptor
@@ -190,3 +190,4 @@ void print_directory_entries(uint32_t inode_number);
 char get_file_type(uint32_t inode_number);
 int split_file_path(char *path, char out[PATH_LENGTH][FILE_NAME_SIZE]);
 void sort_strings(char list[FILES_PER_DIR][FILE_NAME_SIZE], int size);
+void print_path_directories(char path[PATH_LENGTH][FILE_NAME_SIZE], int size);
